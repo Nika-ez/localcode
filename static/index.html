@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>LocalCode — offline AI coding agent</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/vendor/github-dark.min.css">
+  <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+<div id="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 32 32" fill="none"><path d="M9 8.5 3.5 16 9 23.5" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="m23 8.5 5.5 7.5L23 23.5" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="m18.5 6-5 20" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
+      </div>
+      <div class="brand-text">
+        <div class="brand-name">LocalCode</div>
+        <div class="brand-sub">offline coding agent</div>
+      </div>
+      <button class="icon-btn collapse-btn" id="collapseSidebar" title="Hide sidebar" aria-label="Hide sidebar">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+
+    <button class="new-chat-btn" id="newChatBtn">
+      <span class="plus">+</span>
+      <span>New chat</span>
+      <kbd>Ctrl N</kbd>
+    </button>
+
+    <div class="search-wrap">
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="1.7"/><path d="m16 16 4 4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+      <input id="sessionSearch" type="search" placeholder="Search chats…" autocomplete="off" spellcheck="false">
+      <kbd>/</kbd>
+    </div>
+
+    <nav class="session-list" id="sessionList" aria-label="Chats"></nav>
+
+    <div class="sidebar-footer">
+      <button class="footer-btn" id="openModelsBtn">
+        <span class="footer-icon">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M12 3 3 7.5l9 4.5 9-4.5L12 3Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+        </span>
+        <span class="footer-label">Models</span>
+        <span class="dot" id="engineDot"></span>
+      </button>
+      <button class="footer-btn" id="openMcpBtn">
+        <span class="footer-icon">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M9 7V4M15 7V4M8 7h8v3a4 4 0 0 1-4 4 4 4 0 0 1-4-4V7Z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 14v3a3 3 0 0 1-3 3H7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </span>
+        <span class="footer-label">MCP</span>
+      </button>
+      <button class="footer-btn" id="openSettingsBtn">
+        <span class="footer-icon">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z" stroke="currentColor" stroke-width="1.6"/><path d="M19.4 13.5c.1-.5.1-1 0-1.5l2-1.6-2-3.4-2.4 1a7.6 7.6 0 0 0-1.3-.8L15.4 4h-4l-.4 2.6c-.5.2-.9.5-1.3.8l-2.4-1-2 3.4 2 1.6c-.1.5-.1 1 0 1.5l-2 1.6 2 3.4 2.4-1c.4.3.8.6 1.3.8l.4 2.6h4l.4-2.6c.5-.2.9-.5 1.3-.8l2.4 1 2-3.4-2-1.6Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+        </span>
+        <span class="footer-label">Settings</span>
+      </button>
+      <div class="engine-mini" id="engineMini">
+        <span class="dot" id="engineMiniDot"></span>
+        <span id="engineMiniText">Checking engine…</span>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <button class="icon-btn mobile-only" id="mobileMenu" aria-label="Menu">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      </button>
+      <button class="icon-btn show-sidebar-btn" id="showSidebar" title="Show sidebar" aria-label="Show sidebar">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M4 6h16M4 12h10M4 18h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      </button>
+      <div class="title-block">
+        <div class="session-title" id="sessionTitle" title="Rename chat">New chat</div>
+        <div class="session-sub" id="sessionSub">Your machine. Your model. Your code.</div>
+      </div>
+      <div class="top-actions">
+        <button class="model-pill" id="modelPill" title="Models">
+          <span class="dot" id="modelDot"></span>
+          <span id="modelPillText">Choose model</span>
+        </button>
+        <button class="icon-btn" id="toolsToggleBtn" title="Tools" aria-label="Tools">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L4 17l3 3 5.3-5.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.5-.6-.6-2.5 2.6-2.4Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+        </button>
+        <button class="icon-btn" id="filesToggleBtn" title="Workspace files" aria-label="Workspace files">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M3.5 7.5h6l2 2h9v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2v-10Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M3.5 9.5v-2a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+        </button>
+        <button class="icon-btn" id="paletteBtn" title="Commands (Ctrl+K)" aria-label="Commands">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.6"/></svg>
+        </button>
+        <button class="icon-btn" id="sessionMenuBtn" title="Chat menu" aria-label="Chat menu">
+          <svg viewBox="0 0 24 24" fill="none"><circle cx="5" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="19" cy="12" r="1.6" fill="currentColor"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="content">
+      <section class="chat" id="chat">
+        <div class="chat-scroll" id="chatScroll">
+          <div class="welcome" id="welcome">
+            <div class="hero">
+              <div class="hero-logo">
+                <svg viewBox="0 0 32 32" fill="none"><path d="M9 8.5 3.5 16 9 23.5" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="m23 8.5 5.5 7.5L23 23.5" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="m18.5 6-5 20" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
+              </div>
+              <h1>Your code. Your machine.<br><span>Your model.</span></h1>
+              <p>A fully offline coding agent that reads your files, edits them, runs commands, and remembers every chat.</p>
+              <div class="hero-badges">
+                <span><i></i> 100% local</span>
+                <span><i></i> No API keys</span>
+                <span><i></i> Unlimited chats</span>
+              </div>
+            </div>
+            <div class="setup-card" id="setupCard" hidden>
+              <div class="setup-copy">
+                <strong>Finish setting up LocalCode</strong>
+                <span id="setupCardText">Install the local engine and download a model to start.</span>
+              </div>
+              <button class="primary-btn small" id="setupCardBtn">Set up</button>
+            </div>
+            <div class="suggestions" id="suggestions">
+              <button class="suggestion" data-prompt="Build a beautiful landing page for my project. Ask me for the project name and style, then create the files.">
+                <span class="suggestion-icon">✦</span>
+                <strong>Build a landing page</strong>
+                <span>From a blank folder to a polished page</span>
+              </button>
+              <button class="suggestion" data-prompt="Look at this workspace and explain the codebase to me. What does it do, how is it structured, and where should I start?">
+                <span class="suggestion-icon">⌘</span>
+                <strong>Explain this codebase</strong>
+                <span>Architecture, entry points, and key files</span>
+              </button>
+              <button class="suggestion" data-prompt="Find a bug or a rough edge in this workspace, fix it, and run the relevant tests. Explain what changed.">
+                <span class="suggestion-icon">⚡</span>
+                <strong>Fix something real</strong>
+                <span>Inspect, patch, and verify</span>
+              </button>
+              <button class="suggestion" data-prompt="Add a useful set of tests to this project. First inspect the code, then write tests, run them, and fix any failures.">
+                <span class="suggestion-icon">✓</span>
+                <strong>Write tests</strong>
+                <span>Find gaps and make them pass</span>
+              </button>
+            </div>
+            <div class="welcome-foot">
+              <span id="welcomeWorkspace">Workspace: —</span>
+              <button id="welcomeModelsBtn">Browse models →</button>
+            </div>
+          </div>
+
+          <div class="messages" id="messages"></div>
+          <div class="chat-bottom-spacer"></div>
+        </div>
+
+        <div class="composer-area" id="composerArea">
+          <div class="queue-strip" id="queueStrip"></div>
+          <div class="context-strip" id="contextStrip" hidden>
+            <div class="context-label"><span id="contextText">Context</span><span id="contextPct">0%</span></div>
+            <div class="context-track"><div class="context-fill" id="contextFill"></div></div>
+          </div>
+          <div class="composer" id="composer">
+            <textarea id="composerInput" rows="1" placeholder="Ask LocalCode to build something…" spellcheck="false"></textarea>
+            <div class="composer-bottom">
+              <div class="composer-left">
+                <button class="chip-btn" id="attachFileBtn" title="Insert a workspace file">
+                  <svg viewBox="0 0 24 24" fill="none"><path d="M14 6.5 8.5 12a3.5 3.5 0 0 0 5 5l6-6a5 5 0 0 0-7-7l-6.5 6.5a6.5 6.5 0 0 0 9 9l5.5-5.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+                  File
+                </button>
+                <button class="chip-btn" id="approvalModeBtn" title="Tool approval mode">
+                  <svg viewBox="0 0 24 24" fill="none"><path d="M12 3.5 5 6.5v5.2c0 4.2 2.9 7.4 7 8.8 4.1-1.4 7-4.6 7-8.8V6.5l-7-3Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="m9 12 2 2 4-4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  <span id="approvalModeLabel">Ask first</span>
+                </button>
+                <span class="composer-model" id="composerModel">No model</span>
+              </div>
+              <div class="composer-right">
+                <button class="icon-btn stop-btn" id="stopBtn" title="Stop" hidden>
+                  <span></span>
+                </button>
+                <button class="steer-btn" id="steerBtn" title="Interrupt & send now (Ctrl+Enter)" hidden>
+                  <svg viewBox="0 0 24 24" fill="none"><path d="M13 2 4.5 13H11l-1 9 8.5-11H12l1-9Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+                </button>
+                <button class="send-btn" id="sendBtn" title="Send">
+                  <svg viewBox="0 0 24 24" fill="none"><path d="M12 19V5m0 0-6 6m6-6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+          <div class="composer-hint" id="composerHint">
+            <span>LocalCode can edit files and run commands. <b>Enter</b> send · <b>Shift+Enter</b> new line · <b>/</b> commands · <b>Ctrl+K</b> menu</span>
+            <span class="hint-right" id="hintRight"></span>
+          </div>
+        </div>
+      </section>
+
+      <aside class="files-panel" id="filesPanel" hidden>
+        <div class="files-head">
+          <span>Workspace</span>
+          <div class="files-head-actions">
+            <button class="icon-btn small" id="refreshFiles" title="Refresh">↻</button>
+            <button class="icon-btn small" id="closeFiles" title="Close">×</button>
+          </div>
+        </div>
+        <div class="files-path" id="filesPath">/</div>
+        <div class="file-list" id="fileList"></div>
+        <div class="files-foot">
+          <span id="workspacePath"></span>
+          <button class="link-btn" id="openWorkspaceFolder">Open folder</button>
+        </div>
+      </aside>
+    </div>
+  </main>
+</div>
+
+<div id="modalRoot"></div>
+<div id="approvalRoot"></div>
+<div id="toastRoot" aria-live="polite"></div>
+<div id="downloadRoot" aria-live="polite"></div>
+
+<script src="/static/vendor/marked.min.js"></script>
+<script src="/static/vendor/purify.min.js"></script>
+<script src="/static/vendor/highlight.min.js"></script>
+<script src="/static/js/api.js"></script>
+<script src="/static/js/app.js"></script>
+</body>
+</html>
