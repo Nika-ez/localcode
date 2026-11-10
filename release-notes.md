@@ -49,7 +49,13 @@ Works on Windows 10/11. Your chats, settings and models stay in a `data/` folder
 
 ## Verify the download
 
-SHA-256 is published on the release page.
+`LocalCode.exe` — 14,920,805 bytes
+
+```
+SHA-256: a4cfeaa21eb88e7c290313e00a830501830ed1ac16d72dd4773f3ae9c7e443cf
+```
+
+On Windows: `certutil -hashfile LocalCode.exe SHA256`
 
 ## Run from source
 
