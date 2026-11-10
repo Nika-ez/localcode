@@ -488,17 +488,30 @@ def models_repo():
         return err(exc)
     entry = next((c for c in models.CATALOG if c["repo"] == data["repo"]), None)
     wanted = (entry or {}).get("quant", "")
-    ram = config.system_info().get("ram") or 0
+    info = config.system_info()
+    ram = info.get("ram") or 0
+    gpus = info.get("gpus") or []
+    vram = max(((g.get("vram") or 0) for g in gpus), default=0)
     for q in data["quants"]:
         q["recommended"] = bool(wanted and q["quant"] == wanted)
         if not q.get("recommended") and wanted:
             q["recommended"] = q["quant"].startswith(wanted)
         q["size_gb"] = round(q["size"] / models.GB, 2)
         if ram:
-            ratio = q["size"] / ram
-            q["fit"] = "great" if ratio <= 0.6 else ("tight" if ratio <= 0.92 else "no")
+            # Windows and the app need room too; don't call a model a "fit"
+            # just because its file is smaller than the physical RAM.
+            usable = ram * 0.75
+            ratio = q["size"] / usable
+            q["fit"] = "great" if ratio <= 0.7 else ("tight" if ratio <= 1.0 else "no")
         else:
             q["fit"] = "unknown"
+        if vram <= 0:
+            q["gpu_fit"] = "none"
+        elif q["size"] <= vram * 0.85:
+            q["gpu_fit"] = "full"
+        else:
+            q["gpu_fit"] = "partial"
+        q["vram_gb"] = round(vram / 1e9, 1)
     for mm in data.get("mmproj", []):
         mm["size_gb"] = round(mm["size"] / models.GB, 2)
     return jsonify({
@@ -819,7 +832,7 @@ def settings_patch():
     for key, lo, hi, cast in (
         ("context_size", 0, 131072, int),
         ("threads", 0, 64, int),
-        ("gpu_layers", 0, 999, int),
+        ("gpu_layers", -1, 999, int),
         ("max_steps", 0, 10000, int),
         ("temperature", 0.0, 2.0, float),
         ("max_tokens", 128, 32768, int),

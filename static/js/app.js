@@ -2757,7 +2757,7 @@
   function fitBadge(fit, gpuFit) {
     let html = "";
     if (fit && fit !== "unknown") {
-      const labels = { great: "fits RAM", tight: "tight RAM", no: "too large" };
+      const labels = { great: "fits RAM", tight: "tight RAM", no: "too large for RAM" };
       html += '<span class="fit ' + esc(fit) + '">' + esc(labels[fit] || fit) + "</span>";
     }
     if (gpuFit && gpuFit !== "none") {
@@ -3100,10 +3100,30 @@
         '<div class="form-grid one">' +
           '<div class="field"><label>Quantization</label>' + rows + "</div>" +
         "</div>" + mm +
+        '<div class="section-note mt-12" data-fit-warning></div>' +
         '<div class="section-note mt-12">Context: ' + esc(data.entry && data.entry.context ? data.entry.context : "model default") +
         " tokens. LocalCode compacts automatically, so long chats never hit a hard limit.</div>" +
         (data.capabilities ? capabilityBadges(data.capabilities) : "")
       );
+      const fitWarning = $("[data-fit-warning]", modal.body);
+      const updateFitWarning = () => {
+        if (!fitWarning) return;
+        const chosen = quants.find((q) => {
+          const box = $('input[name="quant"]:checked', modal.body);
+          return box && q.key === box.value;
+        });
+        if (chosen && chosen.fit === "no") {
+          fitWarning.style.color = "var(--danger)";
+          fitWarning.textContent = "This quantization is too large for this PC's RAM (" +
+            fmtBytes(chosen.size) + " model). It will probably fail to load — pick a smaller quant, or download it for another computer.";
+        } else {
+          fitWarning.style.color = "";
+          fitWarning.textContent = "Fit badges are a guide: “fits RAM” leaves room for Windows and the app; “GPU partial” means some layers run on the GPU and the rest in RAM.";
+        }
+      };
+      $$('input[name="quant"]', modal.body).forEach((box) =>
+        box.addEventListener("change", updateFitWarning));
+      updateFitWarning();
       modalFoot('<div class="left">' + esc(fmtBytes(quants[0].size)) + " recommended</div>" +
         '<button class="ghost-btn" type="button" data-picker-cancel>Cancel</button>' +
         '<button class="primary-btn" type="button" data-picker-download>Download &amp; load</button>');
@@ -3275,6 +3295,16 @@
     const installing = install.status === "working" || install.status === "starting";
     const flavor = runtime.flavor || (install && install.flavor) ||
       (runtime.installed ? "installed" : "not installed");
+    const ngl = Number(runtime.gpu_layers);
+    let gpuLayersLabel = "—";
+    if (flavor === "cpu") gpuLayersLabel = "CPU only";
+    else if (flavor === "cuda" || flavor === "vulkan") {
+      gpuLayersLabel = !Number.isFinite(ngl) || ngl < 0
+        ? "Auto (fit to VRAM)"
+        : ngl >= 999 ? "All layers"
+          : ngl > 0 ? ngl + " layers"
+            : "CPU only";
+    }
     const statusBits = [];
     statusBits.push('<div class="status-line"><span class="dot ' +
       (runtime.ready ? "ok" : (runtime.loading || installing ? "busy" : (runtime.error ? "bad" : ""))) +
@@ -3289,11 +3319,7 @@
         '<div class="kv-row"><span class="k">Model</span><span class="v">' + esc(runtime.model_name || "none") + "</span></div>" +
         '<div class="kv-row"><span class="k">Context</span><span class="v">' + esc(runtime.context_size || 0) + " tokens</span></div>" +
         '<div class="kv-row"><span class="k">GPU layers</span><span class="v">' +
-          (flavor === "vulkan"
-            ? ((runtime.gpu_layers || 0) >= 999 ? "all (CPU+GPU)"
-              : (runtime.gpu_layers || 0) > 0 ? String(runtime.gpu_layers)
-              : "CPU only (set GPU layers to use the GPU)")
-            : (flavor === "cpu" ? "CPU only" : "—")) + "</span></div>" +
+          esc(gpuLayersLabel) + "</span></div>" +
         (runtime.vision ? '<div class="kv-row"><span class="k">Vision projector</span><span class="v">loaded</span></div>' : "") +
         (runtime.error ? '<div class="section-note" style="color:var(--danger)">' + esc(runtime.error) + "</div>" : "") +
       "</div>";
@@ -3306,7 +3332,7 @@
       "</div>";
     }
     html += '<div class="section-title">Install or update</div>' +
-      '<div class="section-note">Auto detects the best backend for this machine. Vulkan runs the model on your GPU while the CPU handles the rest — both work on the same model at once (works with Intel integrated graphics). CUDA needs an NVIDIA GPU.</div>' +
+      '<div class="section-note">Auto detects the best backend for this machine. CUDA uses an NVIDIA GPU, Vulkan works with most GPUs (including Intel integrated graphics). With GPU layers set to Auto, llama.cpp offloads as many layers as fit in VRAM and keeps the rest on the CPU — both work on the same model at once.</div>' +
       '<div class="btn-row">' +
         '<button class="primary-btn" type="button" data-install-flavor="auto" ' + (installing ? "disabled" : "") + ">Auto (recommended)</button>" +
         '<button class="soft-btn" type="button" data-install-flavor="cpu" ' + (installing ? "disabled" : "") + ">CPU</button>" +
@@ -3323,18 +3349,15 @@
       button.addEventListener("click", async () => {
         try {
           await API.runtime.install(button.dataset.installFlavor);
-          if (button.dataset.installFlavor === "vulkan") {
-            // Enable CPU+GPU together: offload every layer to the GPU (the
-            // CPU keeps running sampling). Lower "GPU layers" in Settings if
-            // a model fails to load.
-            API.settings.patch({ gpu_layers: 999, runtime_flavor: "vulkan" })
-              .then(() => toast("Vulkan install started — GPU layers set to all (CPU+GPU).", "ok", 5000))
-              .catch(() => {});
-          } else if (button.dataset.installFlavor === "cpu") {
+          if (button.dataset.installFlavor === "cpu") {
             API.settings.patch({ gpu_layers: 0, runtime_flavor: "cpu" }).catch(() => {});
             toast("CPU runtime installation started", "ok");
           } else {
-            toast("Runtime installation started", "ok");
+            // GPU builds default to Auto: llama.cpp offloads as many layers
+            // as actually fit in VRAM (CPU+GPU together) instead of guessing.
+            API.settings.patch({ gpu_layers: -1, runtime_flavor: button.dataset.installFlavor })
+              .then(() => toast("GPU engine install started — GPU layers set to Auto.", "ok", 5000))
+              .catch(() => {});
           }
           setTimeout(() => renderModelsTab(ui), 700);
         } catch (err) { toast(errorMessage(err), "error"); }
@@ -3515,8 +3538,8 @@
             { type: "number", min: 0, max: 10000, hint: "0 = unlimited" }) +
           inputSetting("threads", "CPU threads", s.threads || 0,
             { type: "number", min: 0, max: 64, hint: "0 = automatic" }) +
-          inputSetting("gpu_layers", "GPU layers", s.gpu_layers || 0,
-            { type: "number", min: 0, max: 999, hint: "0 = CPU only · 999 = all layers on GPU (CPU+GPU together, needs the Vulkan build)" }) +
+          inputSetting("gpu_layers", "GPU layers", s.gpu_layers === undefined ? -1 : s.gpu_layers,
+            { type: "number", min: -1, max: 999, hint: "-1 = Auto (offload as many layers as fit in VRAM) · 0 = CPU only · 999 = all layers (needs CUDA or Vulkan)" }) +
           inputSetting("temperature", "Temperature", s.temperature === undefined ? 0.2 : s.temperature,
             { type: "number", min: 0, max: 2, step: 0.05 }) +
           inputSetting("max_tokens", "Max response tokens", s.max_tokens || 4096,

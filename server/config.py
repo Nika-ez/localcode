@@ -13,7 +13,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 APP_NAME = "LocalCode"
 
 # In a PyInstaller one-file build, bundled assets live in _MEIPASS while user
@@ -69,7 +69,8 @@ DEFAULTS: dict = {
     "provider": "managed",  # managed | ollama | openai
     "context_size": 0,  # 0 = automatic, never a hard conversation limit
     "threads": 0,
-    "gpu_layers": 0,
+    "gpu_layers": -1,  # -1 = auto (fit to VRAM), 0 = CPU only, N = exact
+    "gpu_auto_migrated": False,
     "approval_mode": "ask",  # ask | auto
     "max_steps": 0,  # 0 = unlimited agent steps
     "temperature": 0.2,
@@ -110,6 +111,13 @@ def load_config() -> dict:
                     cfg.update({k: v for k, v in saved.items() if k in DEFAULTS})
             except Exception:
                 pass
+        # Older versions defaulted GPU layers to 0 (CPU only), which silently
+        # ignored an installed CUDA/Vulkan engine. Move those installs to Auto
+        # once. A later explicit choice of 0 is respected and sticks.
+        if not cfg.get("gpu_auto_migrated"):
+            if int(cfg.get("gpu_layers") or 0) == 0:
+                cfg["gpu_layers"] = -1
+            cfg["gpu_auto_migrated"] = True
         _cache = cfg
         return cfg
 

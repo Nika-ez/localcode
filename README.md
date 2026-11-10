@@ -35,9 +35,12 @@ No console window appears. To close LocalCode, use **Settings → Quit LocalCode
 | 32 GB | 14B (Q4) or 8B with a large context |
 | 64 GB+ | 27B–32B (Q4) |
 
-CPU inference works without a GPU. A discrete GPU is used automatically when the
-bundled llama.cpp build supports it, but CPU-only machines are fully supported.
-The model list marks each entry as **great / tight / no** based on detected RAM.
+CPU inference works without a GPU. Install the CUDA (NVIDIA) or Vulkan build and
+GPU layers defaults to **Auto**: llama.cpp offloads as many layers as actually
+fit in VRAM, keeps the rest on the CPU, and leaves a safety margin. You can still
+set an exact layer count or 0 for CPU-only. The model list marks each entry as
+**great / tight / no** based on detected RAM, with a separate **fits GPU / GPU
+partial** badge for VRAM.
 
 ---
 
@@ -75,10 +78,10 @@ The model list marks each entry as **great / tight / no** based on detected RAM.
 - Resumable downloads, progress, cancel/remove, disk usage, and RAM-fit badges.
 - Every download shows a live popup in the bottom-right corner (progress, speed,
   ETA, cancel); finished cards stay until you dismiss them.
-- **CPU + GPU together**: the Vulkan runtime build offloads model layers to the
-  GPU while the CPU keeps running sampling. On weak integrated GPUs plain CPU
-  is usually faster, so the default stays CPU — install the Vulkan build from
-  Models → Engine to try both.
+- **CPU + GPU together, automatically**: the CUDA (NVIDIA) and Vulkan builds use
+  `-ngl auto` plus llama.cpp's `--fit`, so as many layers as fit in VRAM are
+  offloaded while the CPU handles the rest. On weak integrated GPUs plain CPU is
+  usually faster — pick the CPU engine in Models → Engine.
 - Vision models are supported when an `mmproj` file is present (images are sent
   as OpenAI-style `image_url` parts). Audio and video are reported honestly as
   metadata-only unless a compatible model is installed.
@@ -229,8 +232,9 @@ Manual build:
   video transcription are not implemented.
 - Roblox Studio integration requires Studio to be installed and open; the plugin
   handshake cannot work without it.
-- The bundled llama.cpp build is CPU-oriented. GPU acceleration depends on the
-  runtime build and your hardware.
+- GPU acceleration depends on the runtime build you install (CPU, Vulkan, or
+  CUDA) and your hardware. Blackwell RTX 50-series cards need the CUDA 13.5
+  build, which LocalCode selects automatically.
 - Hosted cost figures are estimates for comparison, not billing statements.
 
 ---

@@ -1,7 +1,7 @@
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 0, 0, 0),
-    prodvers=(1, 0, 0, 0),
+    filevers=(1, 0, 1, 0),
+    prodvers=(1, 0, 1, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -16,12 +16,12 @@ VSVersionInfo(
         [
           StringStruct('CompanyName', 'LocalCode'),
           StringStruct('FileDescription', 'LocalCode - offline AI coding agent'),
-          StringStruct('FileVersion', '1.0.0.0'),
+          StringStruct('FileVersion', '1.0.1.0'),
           StringStruct('InternalName', 'LocalCode'),
           StringStruct('LegalCopyright', 'LocalCode contributors'),
           StringStruct('OriginalFilename', 'LocalCode.exe'),
           StringStruct('ProductName', 'LocalCode'),
-          StringStruct('ProductVersion', '1.0.0.0')
+          StringStruct('ProductVersion', '1.0.1.0')
         ]
       )
     ]),

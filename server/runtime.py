@@ -14,7 +14,7 @@ from pathlib import Path
 
 import requests
 
-from . import config
+from . import config, gguf
 
 GITHUB_RELEASES = "https://api.github.com/repos/ggml-org/llama.cpp/releases"
 UA = {"User-Agent": "LocalCode/0.1 (+https://localcode.app)"}
@@ -51,6 +51,7 @@ class RuntimeManager:
         self.model_context: int | None = None
         self.context_size: int | None = None
         self.gpu_layers: int = 0
+        self.threads: int = 0
         self.mmproj_path: Path | None = None
         self.loading = False
         self.ready = False
@@ -84,6 +85,8 @@ class RuntimeManager:
     def status(self, include_logs: bool = False) -> dict:
         with self.lock:
             info = self.version_info()
+            configured_layers = int(config.get("gpu_layers", -1) or 0)
+            active = self.running() or self.loading
             st = {
                 "installed": self.installed(),
                 "exe": str(self.exe),
@@ -100,7 +103,7 @@ class RuntimeManager:
                 "model_path": str(self.model_path) if self.model_path else None,
                 "model_context": self.model_context,
                 "context_size": self.context_size,
-                "gpu_layers": self.gpu_layers,
+                "gpu_layers": self.gpu_layers if active else configured_layers,
                 "mmproj_path": str(self.mmproj_path) if self.mmproj_path else None,
                 "vision": bool(self.mmproj_path),
                 "started_at": self.started_at,
@@ -357,31 +360,89 @@ class RuntimeManager:
             s.bind(("127.0.0.1", 0))
             return int(s.getsockname()[1])
 
+    def _model_bytes(self) -> int:
+        """Total size of the GGUF model (all split parts, excluding mmproj)."""
+        p = self.model_path
+        if not p or not p.exists():
+            return 0
+        try:
+            total = 0
+            for f in p.parent.glob("*.gguf"):
+                if "mmproj" in f.name.lower():
+                    continue
+                total += f.stat().st_size
+            return total or p.stat().st_size
+        except OSError:
+            return 0
+
+    def _usable_vram(self) -> int:
+        """VRAM that can be used for model layers, minus desktop/driver reserve."""
+        flavor = (self.version_info().get("flavor") or "").lower()
+        if flavor not in {"cuda", "vulkan"}:
+            return 0
+        try:
+            gpus = config.system_info().get("gpus") or []
+        except Exception:
+            return 0
+        vram = 0
+        for gpu in gpus:
+            name = str(gpu.get("name") or "").lower()
+            # Intel integrated graphics share system RAM; counting their
+            # "VRAM" separately would double-count the same memory.
+            if "intel" in name:
+                continue
+            vram = max(vram, int(gpu.get("vram") or 0))
+        return max(0, vram - 1_200_000_000)  # ~1.2 GB for Windows/driver
+
+    def _system_line(self) -> str:
+        """One-line hardware summary written to the engine log for diagnostics."""
+        try:
+            info = config.system_info()
+            ram = (info.get("ram") or 0) / 1e9
+            gpus = info.get("gpus") or []
+            gpu_text = "; ".join(
+                f"{g.get('name') or 'GPU'} ({(int(g.get('vram') or 0) / 1e9):.1f} GB)"
+                for g in gpus
+            ) or "none"
+            flavor = (self.version_info().get("flavor") or "unknown")
+            ngl = "auto" if self.gpu_layers < 0 else str(self.gpu_layers)
+            return (
+                f"system: {ram:.1f} GB RAM | GPU: {gpu_text} | flavor: {flavor} | "
+                f"gpu_layers: {ngl} | context: {self.context_size or 0} | threads: {self.threads or 0}"
+            )
+        except Exception:
+            return "system: (hardware info unavailable)"
+
     def _auto_context(self) -> int:
         """Pick a safe context size for the machine, not a hard conversation limit."""
         try:
             ram_gb = (config.system_info().get("ram") or 0) / (1024 ** 3)
         except Exception:
             ram_gb = 8
-        model_gb = 0.0
-        try:
-            if self.model_path and self.model_path.exists():
-                model_gb = self.model_path.stat().st_size / (1024 ** 3)
-        except Exception:
-            pass
-        # Leave headroom for the OS, the model and the KV cache.
+        model_gb = self._model_bytes() / (1024 ** 3)
+        vram_gb = self._usable_vram() / (1024 ** 3)
+        # Upper bound by RAM tier. This keeps the KV cache from starving
+        # Windows even when the model itself is small.
         if ram_gb <= 0:
             ctx = 8192
         elif ram_gb <= 9:
-            ctx = 8192 if model_gb > 2.5 else 16384
+            ctx = 16384 if model_gb <= 2.5 else 8192
         elif ram_gb <= 16:
-            ctx = 16384 if model_gb > 6 else 32768
+            ctx = 32768 if model_gb <= 6 else 16384
         elif ram_gb <= 32:
             ctx = 32768
         else:
             ctx = 65536
-        if self.model_context:
-            ctx = min(ctx, int(self.model_context))
+        # Then bound it by actual free memory: RAM + usable VRAM, minus the
+        # model, the OS/app and compute buffers.
+        profile = gguf.model_profile(self.model_path) if self.model_path else {}
+        per_token = gguf.kv_bytes_per_token(profile)
+        budget_gb = ram_gb + vram_gb - model_gb - 3.0
+        if budget_gb > 0 and per_token:
+            ctx = min(ctx, int(budget_gb * 1e9 / per_token))
+        trained = int(profile.get("context") or 0) or (self.model_context or 0)
+        if trained:
+            ctx = min(ctx, trained)
         return max(2048, ctx)
 
     def _cmd(self) -> list[str]:
@@ -391,8 +452,11 @@ class RuntimeManager:
             # Use every logical core (up to 8): faster prompt processing and
             # generation on small machines, including 2-core/4-thread laptops.
             threads = max(1, min(8, os.cpu_count() or 4))
+        self.threads = threads
         flavor = self.version_info().get("flavor")
-        gpu_layers = int(cfg.get("gpu_layers") or 0)
+        gpu_layers = int(cfg.get("gpu_layers", -1) or 0)
+        if gpu_layers < -1:
+            gpu_layers = -1
         if flavor == "cpu":
             # A pure-CPU build has no GPU backend; never pass -ngl.
             gpu_layers = 0
@@ -403,6 +467,7 @@ class RuntimeManager:
         if self.model_context:
             ctx = min(ctx, int(self.model_context))
         self.context_size = ctx
+        ngl = "auto" if gpu_layers < 0 else str(gpu_layers)
         cmd = [
             str(self.exe),
             "-m", str(self.model_path),
@@ -411,11 +476,15 @@ class RuntimeManager:
             "--alias", "local",
             "-c", str(ctx),
             "-t", str(threads),
-            "-ngl", str(gpu_layers),
+            "-ngl", ngl,
             "--parallel", "1",
             "--no-webui",
             "--jinja",
         ]
+        # With -ngl auto, llama.cpp's --fit logic (on by default) adjusts the
+        # offload to the actual free VRAM and leaves a safety margin.
+        if gpu_layers < 0 and flavor in {"cuda", "vulkan"}:
+            cmd += ["--fit", "on"]
         # Vision projector, when the model folder includes one.
         if self.model_path:
             parent = self.model_path.parent
@@ -437,11 +506,23 @@ class RuntimeManager:
             # (The model is memory-mapped, so slightly-big models still run via swap;
             # this just blocks absurd loads before they thrash the OS.)
             total = int(config.system_info().get("ram") or 0)
-            model_bytes = p.stat().st_size
-            if total and model_bytes > total * 0.9:
+            try:
+                model_bytes = sum(
+                    f.stat().st_size for f in p.parent.glob("*.gguf")
+                    if "mmproj" not in f.name.lower()
+                ) or p.stat().st_size
+            except OSError:
+                model_bytes = p.stat().st_size
+            vram = self._usable_vram()
+            budget = total + vram
+            if total and model_bytes > budget * 0.9:
+                detail = f"{total / 1e9:.1f} GB RAM"
+                if vram:
+                    detail += f" + {vram / 1e9:.1f} GB usable VRAM"
                 raise RuntimeErrorLC(
-                    f"This model is {model_bytes / 1e9:.1f} GB but the machine only has "
-                    f"{total / 1e9:.1f} GB RAM. Choose a smaller model or quantization."
+                    f"This model is {model_bytes / 1e9:.1f} GB, but this PC has {detail}. "
+                    "Even with GPU offload it cannot fit. Choose a smaller model or a "
+                    "smaller quantization (Q4_K_M is usually 3–4× smaller than Q8)."
                 )
             if self.running() and self.model_id == model_id and self.ready:
                 return self.status()
@@ -466,6 +547,7 @@ class RuntimeManager:
                 self._log_handle = None
             cmd = self._cmd()
             if self._log_handle:
+                self._log_handle.write(self._system_line() + "\n")
                 self._log_handle.write(" ".join(cmd) + "\n")
             try:
                 self.proc = subprocess.Popen(
@@ -511,25 +593,66 @@ class RuntimeManager:
         self.stop()
 
     def _startup_error(self) -> str:
-        tail = _tail(self._log_path, 40)
+        tail = _tail(self._log_path, 60)
         low = tail.lower()
+
+        def last_detail() -> str:
+            for line in reversed(tail.splitlines()):
+                text = line.strip()
+                if text and any(word in text.lower() for word in ("error", "failed", "cannot", "unable")):
+                    return text[:400]
+            return ""
+
+        gpu_hint = ""
+        try:
+            cfg = config.load_config()
+            if self._usable_vram() > 0 and int(cfg.get("gpu_layers", -1) or 0) == 0:
+                gpu_hint = (" Your GPU is not being used: GPU layers is set to CPU only. "
+                            "Set GPU layers to -1 (Auto) in Settings.")
+        except Exception:
+            pass
+
         if "vulkan" in low and ("failed to allocate" in low or "out of device memory" in low
                                 or "failed to allocate pinned memory" in low):
-            return ("The Vulkan build could not allocate GPU memory on this machine. "
-                    "Open Models → Engine, install the CPU build, and set GPU layers to 0.")
-        if "out of memory" in low or "failed to allocate" in low:
-            if "cuda" in low or "cublas" in low:
-                return ("CUDA ran out of GPU memory. The model is too large for your GPU's VRAM. "
-                        "Lower GPU layers in Settings, or use a smaller model/quantization.")
-            return "Not enough memory to load this model. Try a smaller quantization or a smaller model."
+            return ("The Vulkan engine could not allocate GPU memory on this machine. "
+                    "Set GPU layers to -1 (Auto) so it fits to available VRAM, lower the "
+                    "context size, or use the CPU engine.")
+        if ("out of memory" in low or "failed to allocate" in low or "alloc_tensor_range" in low
+                or "bad_alloc" in low or "cannot allocate memory" in low):
+            if "cuda" in low or "cublas" in low or "cudart" in low or "gpu" in low:
+                return ("The engine ran out of memory while loading this model. It is too large "
+                        "for the available RAM + VRAM. Set GPU layers to -1 (Auto), lower the "
+                        "context size, or use a smaller quantization (Q4_K_M instead of Q8).")
+            return ("Not enough memory to load this model. It is too large for this PC. "
+                    "Try a smaller quantization (Q4_K_M instead of Q8) or a smaller model."
+                    + gpu_hint)
         if "no kernel image is available" in low or "sm_120" in low or "compute capability" in low:
             return ("This engine build does not support your NVIDIA GPU architecture. "
                     "Open Models → Engine and reinstall the CUDA engine.")
         if "unknown argument" in low or "invalid argument" in low:
-            return "The local engine rejected a launch option. Try reinstalling it."
+            return "The local engine rejected a launch option. Reinstall the engine to update it."
+        if "failed to load projector" in low or ("mmproj" in low and "error" in low):
+            return "The vision projector (mmproj) could not be loaded. Re-download the projector file."
         if "error loading model" in low or "failed to load model" in low:
-            return "The model file could not be loaded. It may be incomplete or unsupported."
-        return "The local engine exited while loading the model.\n" + tail[-1200:]
+            detail = last_detail()
+            return ("The model file could not be loaded. It may be incomplete or unsupported."
+                    + ("\n" + detail if detail else ""))
+        if "unknown model architecture" in low or ("unsupported" in low and "architecture" in low):
+            return ("This model architecture is not supported by the installed engine. "
+                    "Update the engine in Models → Engine.")
+        # No explicit error in the log: the process was most likely killed while
+        # mapping/reading the model (classic out-of-memory symptom).
+        if "loading model" in low and not last_detail():
+            return ("The engine stopped while reading the model file. This usually means the "
+                    "model is larger than the available RAM + VRAM. Try a smaller quantization "
+                    "or model." + gpu_hint)
+        detail = last_detail()
+        message = "The local engine exited while loading the model."
+        if detail:
+            message += "\n" + detail
+        else:
+            message += "\n" + tail[-1200:]
+        return message + gpu_hint
 
     def _monitor_worker(self) -> None:
         while not self._monitor_stop.wait(3.0):
@@ -576,6 +699,7 @@ class RuntimeManager:
             self.model_context = None
             self.context_size = None
             self.gpu_layers = 0
+            self.threads = 0
             self.mmproj_path = None
             self.started_at = None
 
